@@ -129,5 +129,5 @@ dmypy.json
 .pyre/
 
 *
-!inn_exp36
+!/inn_exp36
 !.gitignore
