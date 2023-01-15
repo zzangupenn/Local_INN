@@ -127,7 +127,7 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
-!inn_exp36/*
+!/inn_exp36/*
 *
 
 !.gitignore
