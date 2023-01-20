@@ -10,13 +10,14 @@ TRT_LOGGER = trt.Logger()
 EXPLICIT_BATCH = 1 << (int)(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH)
 
 device = torch.device('cpu')
-model = Local_INN_Reverse()
+sample_num = 20
+model = Local_INN_Reverse(sample_num)
 EXP_NAME = 'inn_exp36'
-model.model.load_state_dict(torch.load('results/'+EXP_NAME+'/'+EXP_NAME+'_model_best.pt', map_location=device))
+model.model.load_state_dict(torch.load('models/'+EXP_NAME+'/'+EXP_NAME+'_model_best.pt', map_location=device))
 model = model.to(device)
 scan_t = torch.zeros(270).to(device)
 cond_t = torch.zeros(6).to(device)
-sample_num = 50
+
 random_nums1 = np.random.normal(size=(sample_num, 54))
 random_nums1 = torch.from_numpy(random_nums1).type('torch.FloatTensor').to(device)
 

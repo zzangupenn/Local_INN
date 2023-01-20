@@ -1,5 +1,6 @@
 import math
 import numpy as np
+# import time
 
 class EKF():
     def __init__(self) -> None:
@@ -82,7 +83,9 @@ class EKF():
             y[2] += 2 * np.pi
             
         S = self.jH @ PPred @ self.jH.T + R
+        
         K = PPred @ self.jH.T @ np.linalg.inv(S)
+        
         Ky = K @ y
         xEst = xPred + K @ y
         xEst[2] = self.angle_sum(xPred[2], Ky[2])

@@ -15,8 +15,9 @@ from FrEIA.modules import GLOWCouplingBlock, PermuteRandom, RNVPCouplingBlock
 N_DIM = 60
 COND_DIM = 6
 COND_OUT_DIM = 12
-USE_MEAN = 1
+USE_MEAN = 0
 device = torch.device('cuda')
+# device = torch.device('cpu')
 
 class PositionalEncoding_torch():
     def __init__(self, L):
@@ -45,6 +46,21 @@ class PositionalEncoding_torch():
         batch_encoded = torch.stack(batch_encoded_list)
         batch_encoded = batch_encoded.transpose(0, 1).transpose(1, 2).reshape((batch_encoded.shape[1], self.L * batch_encoded.shape[0]))
         return batch_encoded
+
+    def batch_decode(self, sin_value, cos_value):
+        atan2_value = torch.arctan2(sin_value, cos_value) / (self.pi)
+        sub_zero_inds = torch.where(atan2_value < 0)
+        atan2_value[sub_zero_inds] = atan2_value[sub_zero_inds] + 1
+        return atan2_value
+
+    def batch_decode_even(self, sin_value, cos_value):
+        atan2_value = torch.arctan2(sin_value, cos_value) / (self.pi/2)
+        sub_zero_inds = torch.where(atan2_value < 0)
+        atan2_value[sub_zero_inds] = atan2_value[sub_zero_inds] + 1
+        atan2_value[torch.where(torch.abs(atan2_value - 1) < 0.001)] = 0
+        return atan2_value
+    
+
 
 class PositionalEncoding():
     def __init__(self, L):
@@ -82,6 +98,8 @@ class PositionalEncoding():
             atan2_value[np.where(atan2_value < 0)] = atan2_value[np.where(atan2_value < 0)] + 1
             atan2_value[np.where(np.abs(atan2_value - 1) < 0.001)] = 0
         return atan2_value
+
+
 
 class VariationalEncoder(nn.Module):
     def __init__(self):
@@ -182,7 +200,6 @@ def allocate_buffers(engine):
     stream = cuda.Stream()
     for binding in engine:
         size = trt.volume(engine.get_binding_shape(binding)) * engine.max_batch_size
-        print(size)
         dtype = trt.nptype(engine.get_binding_dtype(binding))
         # Allocate host and device buffers
         host_mem = cuda.pagelocked_empty(size, dtype)
@@ -226,12 +243,13 @@ def get_engine(engine_file_path):
         return runtime.deserialize_cuda_engine(f.read())
 
 class Local_INN_Reverse(nn.Module):
-    def __init__(self):
+    def __init__(self, sample_num):
         super().__init__()
         self.model = Local_INN()
+        self.sample_num = sample_num
         
     def forward(self, scan_t, encoded_cond_t, random_nums1, random_nums2):
-        sample_num = 50
+        sample_num = self.sample_num
         encode_scan = torch.zeros((sample_num, N_DIM)).to(torch.device('cuda'))
         encode_scan[:, :54] = self.model.vae.encoder.forward(scan_t, random_nums1)
         encode_scan[1:, 54:] = random_nums2
@@ -243,31 +261,33 @@ class Local_INN_Reverse(nn.Module):
 from utils import ConfigJSON, DataProcessor, DrivableCritic
 import numpy as np
 class Local_INN_TRT_Runtime():
-    def __init__(self, EXP_NAME, use_trt) -> None:
+    def __init__(self, EXP_NAME, use_trt, sample_num) -> None:
         self.data_proc = DataProcessor()
         self.c = ConfigJSON()
-        self.c.load_file('results/' + EXP_NAME + '/' + EXP_NAME + '.json')
+        self.c.load_file('models/' + EXP_NAME + '/' + EXP_NAME + '.json')
         self.p_encoding_c = PositionalEncoding(L = 1)
         self.p_encoding = PositionalEncoding(L = 10)
+        # self.p_encoding_torch = PositionalEncoding_torch(L = 10)
         self.use_trt = use_trt
+        self.sample_num = sample_num
 
         self.device = torch.device('cuda:0')
         
         if self.use_trt:
-            engine_file_path = 'results/' + EXP_NAME + '/' + EXP_NAME + '.trt'
+            engine_file_path = 'models/' + EXP_NAME + '/' + EXP_NAME + '.trt'
             self.engine = get_engine(engine_file_path)
             self.context = self.engine.create_execution_context()
             self.inputs, self.outputs, self.bindings, self.stream = allocate_buffers(self.engine)
-            time.sleep(3)
+            time.sleep(3) # wait for engine loading
         else:
-            self.local_inn_reverse = Local_INN_Reverse()
-            self.local_inn_reverse.model.load_state_dict(torch.load('results/'+EXP_NAME+'/'+EXP_NAME+'_model_best.pt', map_location=self.device))
+            self.local_inn_reverse = Local_INN_Reverse(self.sample_num)
+            self.local_inn_reverse.model.load_state_dict(torch.load('models/'+EXP_NAME+'/'+EXP_NAME+'_model_best.pt', map_location=self.device))
             self.local_inn_reverse.to(self.device)
             self.local_inn_reverse.eval()
         print('Model loaded.')
 
-    def reverse(self, scan, prev_state, sample_num):
-        sample_num = 50
+    def reverse(self, scan, prev_state):
+        sample_num = self.sample_num
         ## normalize scan and sample the latent space
         scan_np = self.data_proc.runtime_normalize(np.array(scan), self.c.d['normalization_laser'])
 
@@ -300,7 +320,7 @@ class Local_INN_TRT_Runtime():
             self.inputs[2].host = np.array(random_nums1, dtype=np.float32, order='C')
             self.inputs[3].host = np.array(random_nums2, dtype=np.float32, order='C')
             trt_outputs = do_inference_v2(self.context, bindings=self.bindings, inputs=self.inputs, outputs=self.outputs, stream=self.stream)
-            encoded_result = np.array(trt_outputs).reshape(50, 60)  
+            encoded_result = np.array(trt_outputs).reshape(sample_num, 60)  
         else:
             scan_t = torch.from_numpy(np.array(scan_np)).type('torch.FloatTensor').to(self.device)
             encoded_cond = torch.from_numpy(encoded_cond).type('torch.FloatTensor').to(self.device)  
@@ -317,6 +337,7 @@ class Local_INN_TRT_Runtime():
         results[:, 0] = self.data_proc.de_normalize(results[:, 0], self.c.d['normalization_x'])
         results[:, 1] = self.data_proc.de_normalize(results[:, 1], self.c.d['normalization_y'])
         results[:, 2] = self.data_proc.de_normalize(results[:, 2], self.c.d['normalization_theta'])
+        
         
         ## find the average
         if USE_MEAN:

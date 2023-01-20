@@ -18,10 +18,11 @@ import matplotlib.pyplot as plt
 from local_inn_trt import Local_INN_TRT_Runtime
 
 PUBLISH_LASER_FRAME = 1
-PUBLISH_ODOM = 1
+PUBLISH_ODOM = 0
 USE_EFK = 1
 USE_TRT = 1
-SKIP = 0
+EKF_parameters = [100, 100] # levine1 1m/s 36
+JUMP_THRESHOLD = 1 # large jump will be filtered
 
 class Local_INN(Node):
     """ 
@@ -40,11 +41,8 @@ class Local_INN(Node):
         self.odom_pub = self.create_publisher(Odometry, '/local_inn/odom', 1)
         self.used_scan_pub = self.create_publisher(LaserScan, used_lidarscan_topic, 1)
         
-        # EXP_NAME = 'inn_exp32_run2' # outdoo2
-        # EXP_NAME = 'inn_exp35_run2' # levine1
         EXP_NAME = 'inn_exp36' # levine1
-        # EXP_NAME = 'inn_exp34_run2' # racetrack
-        self.local_inn = Local_INN_TRT_Runtime(EXP_NAME, USE_TRT)
+        self.local_inn = Local_INN_TRT_Runtime(EXP_NAME, USE_TRT, 20)
         self.hz_cnt = 0
         self.hz = 0
 
@@ -97,27 +95,25 @@ class Local_INN(Node):
         self.prev_state = state.copy()
         self.xEst[:3, 0] = self.prev_state.copy()
         self.xPred = self.xEst.copy()
-        
         print('initialpose', state)
         
 
     def scan_callback(self, msg):
-        if self.speed_scan == 0:
-            ## removing bad points in lidar
-            scan = np.array(msg.ranges)[np.arange(0, 1080, 4)]
-            error_points = np.where((scan == 0.001))[0]
-            for ind in error_points:
-                ind_search = ind
-                while ind_search >= 0 and ind_search < 270 and scan[ind_search] - 0.001 < 1e-5:
-                    ind_search += 1
-                    if ind_search == 270:
-                        ind_search = 0
-                scan[ind] = scan[ind_search]
+        ## removing bad points in lidar
+        scan = np.array(msg.ranges)[np.arange(0, 1080, 4)]
+        error_points = np.where((scan == 0.001))[0]
+        for ind in error_points:
+            ind_search = ind
+            while ind_search >= 0 and ind_search < 270 and scan[ind_search] - 0.001 < 1e-5:
+                ind_search += 1
+                if ind_search == 270:
+                    ind_search = 0
+            scan[ind] = scan[ind_search]
 
-            start_time = time.time()
-            inferred_state, inferred_states = self.local_inn.reverse(scan, self.prev_state.copy(), 50)
+        start_time = time.time()
+        inferred_state, inferred_states = self.local_inn.reverse(scan, self.prev_state.copy())
 
-            EKF_parameters = [100, 100] # levine1 1m/s 36
+        if np.linalg.norm(inferred_state[:2] - self.prev_state[:2]) < JUMP_THRESHOLD:
             if not USE_EFK:
                 self.prev_state = inferred_state.copy()
             else:
@@ -125,7 +121,7 @@ class Local_INN(Node):
                 self.two_pi_warp(inferred_states[:, 2])
                 covariance = np.cov(inferred_states.T) * EKF_parameters[1]
                 covariance[:2, :2] *= EKF_parameters[0]
-
+                
                 self.xEst, self.PEst, K = self.ekf.update(self.xPred, self.PPred, inferred_state[:, None], covariance)
                 self.ekf_update_flag = 1
                 if self.xEst[2, 0] < 0: self.xEst[2, 0] += np.pi * 2
@@ -133,122 +129,113 @@ class Local_INN(Node):
                 self.prev_state = self.xEst[:3, 0].copy()
 
 
-            self.hz += 1/(time.time() - start_time)
-            self.hz_cnt += 1
-            if self.hz_cnt == 100:
-                print(self.hz/100, 'Hz')
-                self.hz_cnt = 0
-                self.hz = 0
+        self.hz += 1/(time.time() - start_time)
+        self.hz_cnt += 1
+        if self.hz_cnt == 100:
+            print(self.hz/100, 'Hz')
+            self.hz_cnt = 0
+            self.hz = 0
 
+        # publish inferred pose
+        if self.pose_publisher.get_subscription_count() > 0:
             new_pose = PoseStamped()
             new_pose.header.stamp = msg.header.stamp
             new_pose.header.frame_id = '/map'
             new_pose.pose.position.x = self.prev_state[0]
             new_pose.pose.position.y = self.prev_state[1]
             yaw = Rotation.from_euler('z', self.prev_state[2], degrees=False).as_quat()
-
             new_pose.pose.orientation.x = yaw[0]
             new_pose.pose.orientation.y = yaw[1]
             new_pose.pose.orientation.z = yaw[2]
             new_pose.pose.orientation.w = yaw[3]
-            
             self.pose_publisher.publish(new_pose)
-            
-            if self.particle_pub.get_subscription_count() > 0:
-                self.publish_particles(inferred_states, msg.header.stamp)
+        
+        # publish inferred state samples
+        if self.particle_pub.get_subscription_count() > 0:
+            self.publish_particles(inferred_states, msg.header.stamp)
 
-            if PUBLISH_LASER_FRAME:
-                laser_t = TransformStamped()
-                laser_t.header.stamp = msg.header.stamp
-                laser_t.header.frame_id = 'map'
-                laser_t.child_frame_id = 'laser_local_inn'
+        if PUBLISH_LASER_FRAME:
+            laser_t = TransformStamped()
+            laser_t.header.stamp = msg.header.stamp
+            laser_t.header.frame_id = 'map'
+            laser_t.child_frame_id = 'laser_local_inn'
 
-                laser_t.transform.translation.x = self.prev_state[0]
-                laser_t.transform.translation.y = self.prev_state[1]
-                laser_t.transform.translation.z = 0.0
+            laser_t.transform.translation.x = self.prev_state[0]
+            laser_t.transform.translation.y = self.prev_state[1]
+            laser_t.transform.translation.z = 0.0
 
-                q = tf_transformations.quaternion_from_euler(0, 0, self.prev_state[2])
-                laser_t.transform.rotation.x = q[0]
-                laser_t.transform.rotation.y = q[1]
-                laser_t.transform.rotation.z = q[2]
-                laser_t.transform.rotation.w = q[3]
+            q = tf_transformations.quaternion_from_euler(0, 0, self.prev_state[2])
+            laser_t.transform.rotation.x = q[0]
+            laser_t.transform.rotation.y = q[1]
+            laser_t.transform.rotation.z = q[2]
+            laser_t.transform.rotation.w = q[3]
 
-                # Send the transformation
-                self.laser_br.sendTransform(laser_t)
+            # Send the transformation
+            self.laser_br.sendTransform(laser_t)
 
-            if PUBLISH_ODOM:
-                odom = Odometry()
-                odom.header.stamp = self.get_clock().now().to_msg()
-                odom.header.frame_id = '/map'
-                odom.pose.pose.position.x = self.prev_state[0]
-                odom.pose.pose.position.y = self.prev_state[1]
-                odom.pose.pose.orientation = Utils.angle_to_quaternion(self.prev_state[2])
-                # cov_mat = np.cov(self.particles, rowvar=False, ddof=0, aweights=self.weights).flatten()
-                # odom.pose.covariance[:cov_mat.shape[0]] = cov_mat
-                if isinstance(self.pre_odom, np.ndarray): 
-                    odom.twist.twist.linear.x = self.pre_odom[0]
-                    odom.twist.twist.angular.z = self.pre_odom[1]
-                self.odom_pub.publish(odom)
-            
+        if PUBLISH_ODOM:
+            odom = Odometry()
+            odom.header.stamp = self.get_clock().now().to_msg()
+            odom.header.frame_id = '/map'
+            odom.pose.pose.position.x = self.prev_state[0]
+            odom.pose.pose.position.y = self.prev_state[1]
+            odom.pose.pose.orientation = Utils.angle_to_quaternion(self.prev_state[2])
+            if isinstance(self.pre_odom, np.ndarray): 
+                odom.twist.twist.linear.x = self.pre_odom[0]
+                odom.twist.twist.angular.z = self.pre_odom[1]
+            self.odom_pub.publish(odom)
+        
+        if self.used_scan_pub.get_subscription_count() > 0:
             used_scan_msg = msg
             used_scan_msg.header.frame_id = 'laser_local_inn'
             used_scan_msg.angle_increment = msg.angle_increment * 4
-            # used_scan_msg.ranges = msg.ranges[::10]
-            # print(set(scan.flatten()))
             used_scan_msg.angle_min = msg.angle_min
             used_scan_msg.angle_max = msg.angle_max
             used_scan_msg.ranges = list(scan.data)
             self.used_scan_pub.publish(used_scan_msg)
-            self.speed_scan = SKIP
-        else:
-            self.speed_scan -= 1
         
     def odom_callback(self, msg):
-        if self.speed_odom == 0:
-            odom_time = msg.header.stamp.sec + msg.header.stamp.nanosec / 1e9
-            linear_speed = msg.twist.twist.linear.x
-            angular_speed = msg.twist.twist.angular.z
-            
-            position = np.array([
-                msg.pose.pose.position.x,
-                msg.pose.pose.position.y])
-            orientation = Utils.quaternion_to_angle(msg.pose.pose.orientation)
-            pose = np.array([position[0], position[1], orientation])
-            
-            if isinstance(self.pre_odom, np.ndarray):            
-                delta_time = odom_time - self.pre_odom[2]
-                if not USE_EFK:
-                    delta_pose = np.array([linear_speed * np.cos(self.prev_state[2]),
-                                        linear_speed * np.sin(self.prev_state[2]),
-                                        angular_speed]) * delta_time
-                    self.prev_state += delta_pose
-                    # pass
-                else:
-                    rot = Utils.rotation_matrix(-self.last_pose[2])
-                    delta = np.array([position - self.last_pose[0:2]]).transpose()
-                    local_delta = (rot*delta).transpose()
-                    self.odometry_data = np.array([local_delta[0,0], local_delta[0,1], orientation - self.last_pose[2]])
-                    self.last_pose = pose
-                    
-                    u = np.array([[np.sqrt(self.odometry_data[0] ** 2 + self.odometry_data[1] ** 2) / delta_time], 
-                                  [self.odometry_data[2] / delta_time]])
-                    # u = np.array([[linear_speed], [angular_speed]])
-                    if self.ekf_update_flag == 1:
-                        self.xPred, self.PPred = self.ekf.predict(self.xEst.copy(), self.PEst.copy(), u, delta_time)
-                    else:
-                        self.xPred, self.PPred = self.ekf.predict(self.xPred.copy(), self.PPred.copy(), u, delta_time)
-                    self.ekf_update_flag = 0
-                    if self.xPred[2, 0] < 0: self.xPred[2, 0] += np.pi * 2
-                    self.two_pi_warp(self.xPred[2, 0])
-                    self.prev_state = self.xPred[:3, 0].copy()
-                    
-                self.pre_odom = np.array([linear_speed, angular_speed, odom_time])
+        odom_time = msg.header.stamp.sec + msg.header.stamp.nanosec / 1e9
+        linear_speed = msg.twist.twist.linear.x
+        angular_speed = msg.twist.twist.angular.z
+        
+        position = np.array([
+            msg.pose.pose.position.x,
+            msg.pose.pose.position.y])
+        orientation = Utils.quaternion_to_angle(msg.pose.pose.orientation)
+        pose = np.array([position[0], position[1], orientation])
+        
+        if isinstance(self.pre_odom, np.ndarray):            
+            delta_time = odom_time - self.pre_odom[2]
+            if not USE_EFK:
+                delta_pose = np.array([linear_speed * np.cos(self.prev_state[2]),
+                                    linear_speed * np.sin(self.prev_state[2]),
+                                    angular_speed]) * delta_time
+                self.prev_state += delta_pose
+                # pass
             else:
+                rot = Utils.rotation_matrix(-self.last_pose[2])
+                delta = np.array([position - self.last_pose[0:2]]).transpose()
+                local_delta = (rot*delta).transpose()
+                self.odometry_data = np.array([local_delta[0,0], local_delta[0,1], orientation - self.last_pose[2]])
                 self.last_pose = pose
-                self.pre_odom = np.array([linear_speed, angular_speed, odom_time])
-            self.speed_odom = SKIP
+                
+                u = np.array([[np.sqrt(self.odometry_data[0] ** 2 + self.odometry_data[1] ** 2) / delta_time], 
+                                [self.odometry_data[2] / delta_time]])
+                # u = np.array([[linear_speed], [angular_speed]])
+                if self.ekf_update_flag == 1:
+                    self.xPred, self.PPred = self.ekf.predict(self.xEst.copy(), self.PEst.copy(), u, delta_time)
+                else:
+                    self.xPred, self.PPred = self.ekf.predict(self.xPred.copy(), self.PPred.copy(), u, delta_time)
+                self.ekf_update_flag = 0
+                if self.xPred[2, 0] < 0: self.xPred[2, 0] += np.pi * 2
+                self.two_pi_warp(self.xPred[2, 0])
+                self.prev_state = self.xPred[:3, 0].copy()
+                
+            self.pre_odom = np.array([linear_speed, angular_speed, odom_time])
         else:
-            self.speed_odom -= 1
+            self.last_pose = pose
+            self.pre_odom = np.array([linear_speed, angular_speed, odom_time])
             
     def publish_particles(self, particles, time_stamp):
         # publish the given particles as a PoseArray object
