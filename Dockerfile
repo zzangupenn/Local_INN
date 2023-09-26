@@ -12,6 +12,7 @@ RUN pip install git+https://github.com/VLL-HD/FrEIA.git
 RUN pip install pyyaml
 RUN pip install tqdm
 RUN pip install matplotlib
+RUN pip install opencv-python
 
 
 # from f1tenth_gym
