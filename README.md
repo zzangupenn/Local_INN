@@ -1,4 +1,4 @@
-# Local_INN_Localization_w_Invertible_Nerual_Network
+# Local_INN: Localization with Invertible Neural Network
 
 
 1. You can use our Dockerfile build and run the container:
