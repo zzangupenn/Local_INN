@@ -20,7 +20,7 @@ elif len(sys.argv) > 1:
     CUDA_NAME = 'cuda'
 else:
     print('Please give scene and exp name.')
-DATA_DIR = 'levine/'
+DATA_DIR = 'data/remaster/levine/'
 DATAFILE = 'levine360_100k.npz'
 
 INSTABILITY_RECOVER = 1
@@ -30,7 +30,7 @@ TRANSFER_TRAINING = 0
 TRANSFER_EXP_NAME = ''
 RE_PROCESS_DATA = 1
 
-BATCHSIZE = int(200)
+BATCHSIZE = int(500)
 N_DIM = int(60)
 COND_DIM = 6
 COND_OUT_DIM = 12
@@ -149,7 +149,7 @@ def main():
     
     ### Training
     trainer = Trainer(EXP_NAME, 500, 0.0001, device,
-                      LR, [300], 0.1, 'exponential',
+                      LR, [300], 0.05, 'exponential',
                       INSTABILITY_RECOVER, 3, 0.99, USE_MIX_PRECISION_TRAINING)
 
     model = Local_INN(device)
