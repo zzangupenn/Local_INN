@@ -38,20 +38,15 @@ RUN pip3 install --upgrade pip
 RUN pip3 install PyOpenGL \
                  PyOpenGL_accelerate
 
-RUN mkdir /Local_INN
-COPY . /Local_INN
-WORKDIR /Local_INN
-RUN cd /Local_INN
+COPY . /workspace
 
-RUN cd ./f1tenth_gym && \
+RUN cd /workspace/f1tenth_gym && \
     pip3 install -e .
-RUN cd /Local_INN
-
-WORKDIR /Local_INN
+RUN cd ..
 
 RUN useradd -m -d /home/user -u 1004 user
 USER root
-RUN chown -R user:user /Local_INN
+RUN chown -R user:user /workspace
 USER 1004:1004
 ENV PATH="${PATH}:/home/user/.local/bin"
 

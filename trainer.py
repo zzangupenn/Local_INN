@@ -29,8 +29,6 @@ class Trainer():
         self.lr = initial_rl
         self.lr_schedule = initial_rl
         self.epoch = 0
-        self.best_pos_loss = float('inf')
-        self.best_ori_loss = float('inf')
         self.best_epoch_info = np.ones(7) * float('inf')
         self.prev_epoch_info = np.ones(7) * float('inf')
         self.current_schedule = 0
@@ -113,18 +111,13 @@ class Trainer():
             model.to(self.device)
             
             self.best_epoch_info = np.load(info_filename)
-            self.prev_epoch_info = self.best_epoch_info.copy()
-            self.best_pos_loss = self.get_best_merit(self.best_epoch_info, rank=1)
-            self.best_ori_loss = self.get_best_merit(self.best_epoch_info, rank=2)
-            
+            self.prev_epoch_info = self.best_epoch_info.copy()            
             for past_epoch in range(int(self.best_epoch_info[3].copy()) + 1):
                 self.epoch = past_epoch
                 _ = self.get_lr()
             self.epoch = int(self.best_epoch_info[3].copy()) + 1
 
             if transfer:
-                self.best_pos_loss = np.float('inf')
-                self.best_ori_loss = np.float('inf')
                 self.best_epoch_info[0:3] = np.float('inf')
 
             return model
@@ -134,12 +127,7 @@ class Trainer():
     
     def get_best_merit(self, epoch_info, rank=0):
         if rank == 0:
-            return epoch_info[6] + epoch_info[5]
-        elif rank == 1:
-            return epoch_info[6]
-        elif rank == 2:
-            return epoch_info[5]
-    
+            return epoch_info[0] + epoch_info[2]
     
     def step(self, model, epoch_info, step_use_mix):
         path = self.path
@@ -147,24 +135,14 @@ class Trainer():
         return_text = ''
         use_mix_precision = self.use_mix_precision
         
-        if self.get_best_merit(epoch_info, 1) < self.best_pos_loss:
-            self.best_pos_loss = self.get_best_merit(epoch_info, 1).copy()
-            self.save_model(model, epoch_info, 'best_pos', path)
-            return_text = 'best_pos'
-        
-        if self.get_best_merit(epoch_info, 2) < self.best_ori_loss:
-            self.best_ori_loss = self.get_best_merit(epoch_info, 2).copy()
-            self.save_model(model, epoch_info, 'best_ori', path)
-            return_text = 'best_ori'
-        
         if self.get_best_merit(self.best_epoch_info) > self.get_best_merit(epoch_info):
             self.best_epoch_info = epoch_info.copy()
             self.save_model(model, epoch_info, 'best', path)
             return_text = 'best'
         
-        if self.instability_recover and (np.sum(epoch_info[0:2]) > np.sum(self.best_epoch_info[0:2]) * self.instable_thresh \
+        # detect instable epoch
+        if self.instability_recover and (self.get_best_merit(epoch_info) > self.get_best_merit(self.best_epoch_info) * self.instable_thresh \
                                          or any(np.isnan(epoch_info))):
-            # detect instable epoch
             print('Instable epoch detected.')
             model = self.load_model(model, 'best', path)
             self.lr *= self.instable_gamma
