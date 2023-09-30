@@ -274,8 +274,8 @@ def main():
                     gt_posit[:, 1] = dp.de_normalize(x_gt[:, 1], c.d['normalization_y'])
                     epoch_posit_err.append(torch.median(torch.norm(result_posit[:, 0:2] - gt_posit[:, 0:2], dim=1)))
                     
-                    result_angles = torch.zeros((x_hat_gt.shape[0], 1)).to(device)
-                    result_angles[:, 0] = p_encoding_t.batch_decode_even(x_hat_0[:, 4], x_hat_0[:, 5])
+                    result_angles = torch.zeros((x_hat_gt.shape[0])).to(device)
+                    result_angles = p_encoding_t.batch_decode_even(x_hat_0[:, 4], x_hat_0[:, 5])
                     orient_err = torch.abs(result_angles - x_gt[:, 2]) * 2 * np.pi
                     epoch_orient_err.append(torch.median(orient_err))
 
