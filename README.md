@@ -1,5 +1,7 @@
 # Local_INN: Localization with Invertible Neural Network
 
+[Link](https://arxiv.org/abs/2209.11925) to the paper.
+
 ## Local_INN vs. Particle Filter
 Local_INN is red, PF is blue. We can see PF is lagging behind.
 ![ezgif-6-8b183a4816](https://github.com/zzangupenn/Local_INN/assets/43392543/aca56241-d104-4b9b-beaf-234107e01c4e)
