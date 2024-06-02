@@ -1,12 +1,8 @@
 # Local_INN: Localization with Invertible Neural Network
 
-## Introduction
-
+## Introduction Video
 
 https://github.com/zzangupenn/Local_INN/assets/43392543/9790c0c2-55c8-4c64-88d1-de944bc3ebab
-
-
-
 
 ## Installization
 
